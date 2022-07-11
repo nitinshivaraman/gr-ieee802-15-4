@@ -303,7 +303,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [852, 205]
+    coordinate: [872, 280.0]
     rotation: 0
     state: enabled
 - name: digital_clock_recovery_mm_xx_0

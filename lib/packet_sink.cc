@@ -32,6 +32,8 @@ using namespace gr::ieee802_15_4;
 #define VERBOSE 0
 // less verbose output for higher level debugging
 #define VERBOSE2 0
+#define VERBOSE3 1
+#define PACKET_LENGTH 44
 
 // this is the mapping between chips and symbols if we do
 // a fm demodulation of the O-QPSK signal. Note that this
@@ -49,6 +51,9 @@ static const unsigned int CHIP_MAPPING[] = {
 static const int MAX_PKT_LEN = 128 - 1; // remove header and CRC
 static const int MAX_LQI_SAMPLES = 8;   // Number of chip correlation samples to take
 
+static unsigned int received_packet[MAX_PKT_LEN] = {};
+static unsigned int encoded_bit_count = 0;
+
 class packet_sink_impl : public packet_sink
 {
 public:
@@ -57,11 +62,16 @@ public:
         if (VERBOSE)
             fprintf(stderr, "@ enter_search\n");
 
+        int i = 0;
         d_state = STATE_SYNC_SEARCH;
         d_shift_reg = 0;
         d_preamble_cnt = 0;
         d_chip_cnt = 0;
         d_packet_byte = 0;
+        for(i = 0; i < MAX_PKT_LEN; i++)
+            received_packet[i] = 0;
+        // memset(received_packet, 0, MAX_PKT_LEN* sizeof(unsigned int)) ;
+        encoded_bit_count= 0;
     }
 
     void enter_have_sync()
@@ -89,6 +99,28 @@ public:
         d_payload_cnt = 0;
         d_packet_byte = 0;
         d_packet_byte_index = 0;
+        encoded_bit_count = 0;
+    }
+
+
+    unsigned char reverse_bits(unsigned char b) {
+        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+        return b;
+    }
+
+
+
+    void print_decoded_packet()
+    {
+        int temp = 0;
+        for(temp = 0; temp <= (PACKET_LENGTH/2); temp++);
+        {
+            fprintf(stderr, "%x ", d_packet[temp]), fflush(stderr);
+        }
+        fprintf(stderr,"\n"), fflush(stderr);
+            
     }
 
 
@@ -131,6 +163,79 @@ public:
         return 0xFF;
     }
 
+
+    void resolve_collision()
+    {
+        unsigned char rcv_lsb = 0, rcv_msb = 0, idx = 0, new_idx = 0, left_good_idx = 0, right_good_idx = 0;
+        unsigned char preamble_count = 0, temp = 0, reversed_bits = 0;
+        unsigned char packet[127] = {}, new_packet[127] = {};
+        while((received_packet[idx] != 0x00))
+    //     // for (idx = 0; idx < (MAX_PKT_LEN); idx = idx+2)
+        {
+            rcv_lsb = decode_chips(received_packet[idx]);
+            rcv_msb = decode_chips(received_packet[idx+1]);
+            if ((rcv_lsb == 0xFF) || (rcv_msb == 0xFF))
+            {
+                if(preamble_count <= 4)
+                {
+                    // // Subtract the first 4 zeros of the preamble
+                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
+                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
+                    // rcv_lsb |= rcv_msb << 4;
+                    // fprintf(stderr, "%x ", rcv_lsb), fflush(stderr);
+                    // packet[idx/2] = rcv_msb;
+                    // if (idx == left_good_idx)
+                    //     left_good_idx =  idx + 2;
+                    preamble_count++;
+                }
+                else if (preamble_count == 5)
+                {
+                    // // Subtract the SFD of the preamble
+                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[7] & 0xFFFFFFFE));
+                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[10] & 0xFFFFFFFE));
+                    // rcv_lsb |= rcv_msb << 4;
+                    // fprintf(stderr, "%x ", rcv_lsb), fflush(stderr);
+                    // packet[idx/2] = rcv_msb;
+                    // if (idx == left_good_idx)
+                    //     left_good_idx =  idx + 2;
+                    preamble_count++;
+                }
+                else
+                {
+                    // temp = (((PACKET_LENGTH/2) - 1) - (new_idx - (PACKET_LENGTH/2)));
+                    // reversed_bits = reverse_bits(new_packet[temp]);
+                    // fprintf(stderr, "%x ", reversed_bits), fflush(stderr);
+                    // packet[idx/2] = reversed_bits;
+                    // rcv_lsb = reversed_bits & 0xF;
+                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[rcv_lsb] & 0xFFFFFFFE));
+                    // rcv_msb = (reversed_bits & 0xF0) >> 4;
+                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[rcv_msb] & 0xFFFFFFFE));
+                    // rcv_lsb |= rcv_msb << 4;
+                    // new_packet[new_idx] = rcv_msb;
+                    new_idx++;
+                }
+            }
+            // Received a decodable byte
+            else
+            {
+                rcv_lsb |= rcv_msb << 4;
+                packet[idx/2] = rcv_lsb;
+                if (idx == left_good_idx)
+                    left_good_idx =  idx + 2;
+                else if (!right_good_idx)
+                    right_good_idx = idx;
+                
+            }
+            idx = idx + 2;
+            // new_idx = (new_idx > 1) ? new_idx++ : new_idx;
+                // fprintf(stderr,"%x ", packet[idx/2]), fflush(stderr);
+        }
+        for(temp = 0; temp < (PACKET_LENGTH/2); temp++)
+            d_packet[temp] = packet[temp];
+        // fprintf(stderr, "Original packet is: "), fflush(stderr);
+        fprintf(stderr, "Exiting at idx: %d\n", idx), fflush(stderr);
+    }
+
     int slice(float x) { return x > 0 ? 1 : 0; }
 
     packet_sink_impl(int threshold)
@@ -163,7 +268,7 @@ public:
 
         const float* inbuf = (const float*)input_items[0];
         int ninput = ninput_items[0];
-        int count = 0;
+        int count = 0, potential_collision = 0;
         int i = 0;
 
         if (VERBOSE)
@@ -314,6 +419,7 @@ public:
                         if (d_packet_byte_index % 2 == 0) {
                             // we have a complete byte which represents the frame length.
                             int frame_len = d_packet_byte;
+                            // fprintf(stderr, "The frame length is %d\n", frame_len), fflush(stderr);
                             if (frame_len <= MAX_PKT_LEN) {
                                 enter_have_header(frame_len);
                             } else {
@@ -344,26 +450,28 @@ public:
 
                     if (d_chip_cnt == 0) {
                         unsigned char c = decode_chips(d_shift_reg);
+                        // if(d_shift_reg == 0x00)
+                        //     fprintf(stderr, "The packet has 0x00. This is the problem!\n"), fflush(stderr);
+                        // Nitin : Add the encoded bits for later processing
+                        received_packet[encoded_bit_count] = d_shift_reg;
+                        encoded_bit_count++;
                         if (c == 0xff) {
-                            // something is wrong. restart the search for a sync
-                            if (VERBOSE2)
-                                fprintf(stderr,
-                                        "Found a not valid chip sequence! %u\n",
-                                        d_shift_reg),
-                                    fflush(stderr);
-
-                            enter_search();
-                            break;
+                                potential_collision++;
+                                if(potential_collision == 1)
+                                    d_packetlen = (d_packetlen * 2) + 6; // include the preamble + packet length of collided packet
                         }
                         // the first symbol represents the first part of the byte.
-                        if (d_packet_byte_index == 0) {
-                            d_packet_byte = c;
-                        } else {
-                            // c is always < 15
-                            d_packet_byte |= c << 4;
+                        else if(!potential_collision) 
+                        {
+                            if (d_packet_byte_index == 0) {
+                                d_packet_byte = c;
+                            } else {
+                                // c is always < 15
+                                d_packet_byte |= c << 4;
+                            }
                         }
-                        // fprintf(stderr, "%d: 0x%x\n", d_packet_byte_index, c);
                         d_packet_byte_index = d_packet_byte_index + 1;
+                        
                         if (d_packet_byte_index % 2 == 0) {
                             // we have a complete byte
                             if (VERBOSE2)
@@ -380,12 +488,25 @@ public:
                             d_payload_cnt++;
                             d_packet_byte_index = 0;
 
-                            if (d_payload_cnt >=
-                                d_packetlen) { // packet is filled, including CRC. might
+                            if (d_payload_cnt >= d_packetlen) { // packet is filled, including CRC. might 
                                                // do check later in here
                                 unsigned int scaled_lqi = (d_lqi / MAX_LQI_SAMPLES) << 3;
                                 unsigned char lqi =
                                     (scaled_lqi >= 256 ? 255 : scaled_lqi);
+
+                                // fprintf(stderr,"Packet length is %d and encoded bit count is %d\n", d_packetlen, encoded_bit_count),fflush(stderr);
+                                // Detect and/or correct collision
+                                if(potential_collision)
+                                {
+                                    d_payload_cnt = 0;
+                                    resolve_collision();
+                                    break;
+                                }
+                                // Remove the duplicate reversed half of the packet
+                                d_packetlen_cnt = d_packetlen_cnt/2;
+
+                                // fprintf(stderr, "Original packet is length is %d with packet contents: ", d_packetlen_cnt), fflush(stderr);
+                                // print_decoded_packet();
 
                                 pmt::pmt_t meta = pmt::make_dict();
                                 meta = pmt::dict_add(
@@ -401,6 +522,7 @@ public:
                                     fprintf(stderr,
                                             "Adding message of size %d to queue\n",
                                             d_packetlen_cnt);
+                                // fprintf(stderr,"Calling enter search here!\n"),fflush(stderr);
                                 enter_search();
                                 break;
                             }

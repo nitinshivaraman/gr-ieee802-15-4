@@ -20,6 +20,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <algorithm>
 
 using namespace gr::ieee802_15_4;
 
@@ -111,6 +112,27 @@ public:
                          pmt::cons(pmt::PMT_NIL, pmt::make_blob(d_msg, d_msg_len)));
     }
 
+
+    void reverse_arr(char arr[], int n)
+    {
+        char arrrev[128];
+ 
+        for (int i = 0; i < n; i++) {
+            arrrev[n - 1 - i] = arr[i];
+        }
+ 
+        for (int i = 0; i < n; i++) {
+            arr[i] = arrrev[i];
+        }
+    }
+
+    unsigned char reverse_bits(unsigned char b) {
+        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+        return b;
+    }
+
     uint16_t crc16(char* buf, int len)
     {
         uint16_t crc = 0;
@@ -132,6 +154,7 @@ public:
 
     void generate_mac(const char* buf, int len)
     {
+        char reverse_data[128];
 
         // FCF
         // data frame, no security
@@ -157,6 +180,18 @@ public:
         d_msg[10 + len] = crc >> 8;
 
         d_msg_len = 9 + len + 2;
+
+        //Nitin: Adding data reversal for RnR decoding
+        for(int i=0;i<(9+len+2); i++)
+            reverse_data[i] = d_msg[i];
+        
+        reverse_arr(reverse_data, 9+len+2);
+        for(int i=0;i<(9+len+2); i++)
+            reverse_data[i] = reverse_bits(reverse_data[i]);
+
+        std:memcpy(d_msg+9+len+2, reverse_data, 9+len+2);
+
+        d_msg_len = 2 * (9 + len + 2);
     }
 
     void print_message()
