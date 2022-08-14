@@ -48,7 +48,7 @@ static const unsigned int CHIP_MAPPING[] = {
     1368596360, 85537272,   139563807,  2021988657
 };
 
-static const int MAX_PKT_LEN = 128 - 1; // remove header and CRC
+static const int MAX_PKT_LEN = 182; // remove header and CRC
 static const int MAX_LQI_SAMPLES = 8;   // Number of chip correlation samples to take
 
 static unsigned int received_packet[MAX_PKT_LEN] = {};
@@ -68,10 +68,11 @@ public:
         d_preamble_cnt = 0;
         d_chip_cnt = 0;
         d_packet_byte = 0;
+        encoded_bit_count= 0;
         for(i = 0; i < MAX_PKT_LEN; i++)
             received_packet[i] = 0;
         // memset(received_packet, 0, MAX_PKT_LEN* sizeof(unsigned int)) ;
-        encoded_bit_count= 0;
+        
     }
 
     void enter_have_sync()
@@ -178,24 +179,37 @@ public:
             {
                 if(preamble_count <= 4)
                 {
-                    // // Subtract the first 4 zeros of the preamble
-                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
-                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
-                    // rcv_lsb |= rcv_msb << 4;
+                    // Subtract the first 4 zeros of the preamble
+                    rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
+                    rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[0] & 0xFFFFFFFE));
+                    rcv_lsb |= rcv_msb << 4;
                     // fprintf(stderr, "%x ", rcv_lsb), fflush(stderr);
-                    // packet[idx/2] = rcv_msb;
+                    packet[idx/2] = rcv_lsb;
                     // if (idx == left_good_idx)
                     //     left_good_idx =  idx + 2;
                     preamble_count++;
                 }
                 else if (preamble_count == 5)
                 {
-                    // // Subtract the SFD of the preamble
-                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[7] & 0xFFFFFFFE));
-                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[10] & 0xFFFFFFFE));
-                    // rcv_lsb |= rcv_msb << 4;
+                    // Subtract the SFD of the preamble
+                    rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[7] & 0xFFFFFFFE));
+                    rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[10] & 0xFFFFFFFE));
+                    rcv_lsb |= rcv_msb << 4;
                     // fprintf(stderr, "%x ", rcv_lsb), fflush(stderr);
-                    // packet[idx/2] = rcv_msb;
+                    packet[idx/2] = rcv_lsb;
+                    // if (idx == left_good_idx)
+                    //     left_good_idx =  idx + 2;
+                    preamble_count++;
+                }
+                // For Frame length
+                else if (preamble_count == 6)
+                {
+                    // Subtract the frame length of 44 of the preamble
+                    rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[4] & 0xFFFFFFFE));
+                    rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[4] & 0xFFFFFFFE));
+                    rcv_lsb |= rcv_msb << 4;
+                    // fprintf(stderr, "%x ", rcv_lsb), fflush(stderr);
+                    packet[idx/2] = rcv_lsb;
                     // if (idx == left_good_idx)
                     //     left_good_idx =  idx + 2;
                     preamble_count++;
@@ -203,15 +217,15 @@ public:
                 else
                 {
                     // temp = (((PACKET_LENGTH/2) - 1) - (new_idx - (PACKET_LENGTH/2)));
-                    // reversed_bits = reverse_bits(new_packet[temp]);
+                    reversed_bits = reverse_bits(new_packet[temp]);
                     // fprintf(stderr, "%x ", reversed_bits), fflush(stderr);
-                    // packet[idx/2] = reversed_bits;
-                    // rcv_lsb = reversed_bits & 0xF;
-                    // rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[rcv_lsb] & 0xFFFFFFFE));
-                    // rcv_msb = (reversed_bits & 0xF0) >> 4;
-                    // rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[rcv_msb] & 0xFFFFFFFE));
-                    // rcv_lsb |= rcv_msb << 4;
-                    // new_packet[new_idx] = rcv_msb;
+                    packet[idx/2] = reversed_bits;
+                    rcv_lsb = reversed_bits & 0xF;
+                    rcv_lsb = decode_chips(received_packet[idx] - (CHIP_MAPPING[rcv_lsb] & 0xFFFFFFFE));
+                    rcv_msb = (reversed_bits & 0xF0) >> 4;
+                    rcv_msb = decode_chips(received_packet[idx+1] - (CHIP_MAPPING[rcv_msb] & 0xFFFFFFFE));
+                    rcv_lsb |= rcv_msb << 4;
+                    new_packet[new_idx] = rcv_msb;
                     new_idx++;
                 }
             }
@@ -220,15 +234,15 @@ public:
             {
                 rcv_lsb |= rcv_msb << 4;
                 packet[idx/2] = rcv_lsb;
-                if (idx == left_good_idx)
-                    left_good_idx =  idx + 2;
-                else if (!right_good_idx)
-                    right_good_idx = idx;
+                // if (idx == left_good_idx)
+                //     left_good_idx =  idx + 2;
+                // else if (!right_good_idx)
+                //     right_good_idx = idx;
                 
             }
             idx = idx + 2;
             // new_idx = (new_idx > 1) ? new_idx++ : new_idx;
-                // fprintf(stderr,"%x ", packet[idx/2]), fflush(stderr);
+            fprintf(stderr," Decoded value is %x ", packet[idx/2]), fflush(stderr);
         }
         for(temp = 0; temp < (PACKET_LENGTH/2); temp++)
             d_packet[temp] = packet[temp];
@@ -268,7 +282,8 @@ public:
 
         const float* inbuf = (const float*)input_items[0];
         int ninput = ninput_items[0];
-        int count = 0, potential_collision = 0;
+        int count = 0;
+        static int potential_collision = 0;
         int i = 0;
 
         if (VERBOSE)
@@ -423,6 +438,7 @@ public:
                             if (frame_len <= MAX_PKT_LEN) {
                                 enter_have_header(frame_len);
                             } else {
+                                fprintf(stderr, "Collision at the Frame length\n"), fflush(stderr);
                                 enter_search();
                             }
                             break;
@@ -453,12 +469,16 @@ public:
                         // if(d_shift_reg == 0x00)
                         //     fprintf(stderr, "The packet has 0x00. This is the problem!\n"), fflush(stderr);
                         // Nitin : Add the encoded bits for later processing
-                        received_packet[encoded_bit_count] = d_shift_reg;
-                        encoded_bit_count++;
+                        received_packet[encoded_bit_count++] = d_shift_reg;
                         if (c == 0xff) {
                                 potential_collision++;
                                 if(potential_collision == 1)
-                                    d_packetlen = (d_packetlen * 2) + 6; // include the preamble + packet length of collided packet
+                                {
+                                    d_packetlen = (d_packetlen * 2) + 6 - d_payload_cnt; // include the preamble + packet length of collided packet
+                                    fprintf(stderr, "received_packet before collision is "), fflush(stderr);
+                                    for (i = 0; i < (encoded_bit_count); i = i++)
+                                        fprintf(stderr, "%x ", received_packet[i]), fflush(stderr);
+                                }
                         }
                         // the first symbol represents the first part of the byte.
                         else if(!potential_collision) 
@@ -494,14 +514,15 @@ public:
                                 unsigned char lqi =
                                     (scaled_lqi >= 256 ? 255 : scaled_lqi);
 
-                                // fprintf(stderr,"Packet length is %d and encoded bit count is %d\n", d_packetlen, encoded_bit_count),fflush(stderr);
                                 // Detect and/or correct collision
                                 if(potential_collision)
                                 {
                                     d_payload_cnt = 0;
                                     resolve_collision();
-                                    break;
                                 }
+                                fprintf(stderr, "received_packet without collision is "), fflush(stderr);
+                                for (i = 0; i < (encoded_bit_count); i = i+3)
+                                    fprintf(stderr, "%x ", received_packet[i]), fflush(stderr);
                                 // Remove the duplicate reversed half of the packet
                                 d_packetlen_cnt = d_packetlen_cnt/2;
 
